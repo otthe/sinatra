@@ -129,8 +129,8 @@ module Sinatra
         super || to_str.respond_to?(*args)
       end
 
-      def method_missing(*args, &block)
-        to_str.send(*args, &block)
+      def method_missing(...)
+        to_str.send(...)
       end
     end
 
@@ -407,7 +407,7 @@ module Sinatra
 
     # https://html.spec.whatwg.org/#multipart-form-data
     MULTIPART_FORM_DATA_REPLACEMENT_TABLE = {
-      '"'  => '%22',
+      '"' => '%22',
       "\r" => '%0D',
       "\n" => '%0A'
     }.freeze
@@ -479,13 +479,11 @@ module Sinatra
       def each(&front)
         @front = front
         @scheduler.defer do
-          begin
-            @back.call(self)
-          rescue Exception => e
-            @scheduler.schedule { raise e }
-          ensure
-            close unless @keep_open
-          end
+          @back.call(self)
+        rescue Exception => e
+          @scheduler.schedule { raise e }
+        ensure
+          close unless @keep_open
         end
       end
 
@@ -515,15 +513,13 @@ module Sinatra
     def stream(keep_open = false)
       scheduler = env['async.callback'] ? EventMachine : Stream
       current   = @params.dup
-      stream = if scheduler == Stream  && keep_open
-        Stream.new(scheduler, false) do |out|
-          until out.closed?
-            with_params(current) { yield(out) }
-          end
-        end
-      else
-        Stream.new(scheduler, keep_open) { |out| with_params(current) { yield(out) } }
-      end
+      stream = if scheduler == Stream && keep_open
+                 Stream.new(scheduler, false) do |out|
+                   with_params(current) { yield(out) } until out.closed?
+                 end
+               else
+                 Stream.new(scheduler, keep_open) { |out| with_params(current) { yield(out) } }
+               end
       body stream
     end
 
@@ -1143,6 +1139,7 @@ module Sinatra
 
     # Attempt to serve static files from public directory. Throws :halt when
     # a matching file is found, returns nil otherwise.
+    # If custom static headers are defined, use them.
     def static!(options = {})
       return if (public_dir = settings.public_folder).nil?
 
@@ -1151,11 +1148,19 @@ module Sinatra
 
       path = File.expand_path(path)
       return unless path.start_with?("#{File.expand_path(public_dir)}/")
-
       return unless File.file?(path)
 
       env['sinatra.static_file'] = path
+
+      # Add caching if configured
       cache_control(*settings.static_cache_control) if settings.static_cache_control?
+
+      if settings.respond_to?(:static_headers) && settings.static_headers
+        settings.static_headers.each do |k, v|
+          headers[k] = v
+        end
+      end
+
       send_file path, options.merge(disposition: nil)
     end
 
@@ -1271,7 +1276,7 @@ module Sinatra
     def dump_errors!(boom)
       if boom.respond_to?(:detailed_message)
         msg = boom.detailed_message(highlight: false)
-        if msg =~ /\A(.*?)(?: \(#{ Regexp.quote(boom.class.to_s) }\))?\n/
+        if msg =~ /\A(.*?)(?: \(#{Regexp.quote(boom.class.to_s)}\))?\n/
           msg = $1
           additional_msg = $'.lines(chomp: true)
         else
@@ -1290,7 +1295,7 @@ module Sinatra
         %r{/sinatra(/(base|main|show_exceptions))?\.rb$},   # all sinatra code
         %r{lib/tilt.*\.rb$},                                # all tilt code
         /^\(.*\)$/,                                         # generated code
-        /\/bundled_gems.rb$/,                               # ruby >= 3.3 with bundler >= 2.5
+        %r{/bundled_gems.rb$},                               # ruby >= 3.3 with bundler >= 2.5
         %r{rubygems/(custom|core_ext/kernel)_require\.rb$}, # rubygems require hacks
         /active_support/,                                   # active_support require hacks
         %r{bundler(/(?:runtime|inline))?\.rb},              # bundler require hacks
@@ -1973,21 +1978,21 @@ module Sinatra
     set :bind, proc { development? ? 'localhost' : '0.0.0.0' }
     set :port, Integer(ENV['PORT'] && !ENV['PORT'].empty? ? ENV['PORT'] : 4567)
     set :quiet, false
-    set :host_authorization, ->() do
+    set :host_authorization, lambda {
       if development?
         {
           permitted_hosts: [
-            "localhost",
-            ".localhost",
-            ".test",
-            IPAddr.new("0.0.0.0/0"),
-            IPAddr.new("::/0"),
+            'localhost',
+            '.localhost',
+            '.test',
+            IPAddr.new('0.0.0.0/0'),
+            IPAddr.new('::/0')
           ]
         }
       else
         {}
       end
-    end
+    }
 
     ruby_engine = defined?(RUBY_ENGINE) && RUBY_ENGINE
 
@@ -2011,6 +2016,8 @@ module Sinatra
     set :public_folder, proc { root && File.join(root, 'public') }
     set :static, proc { public_folder && File.exist?(public_folder) }
     set :static_cache_control, false
+
+    set :static_headers, {}
 
     error ::Exception do
       response.status = 500
@@ -2151,17 +2158,17 @@ module Sinatra
   end
 
   # Extend the top-level DSL with the modules provided.
-  def self.register(*extensions, &block)
-    Delegator.target.register(*extensions, &block)
+  def self.register(...)
+    Delegator.target.register(...)
   end
 
   # Include the helper modules provided in Sinatra's request context.
-  def self.helpers(*extensions, &block)
-    Delegator.target.helpers(*extensions, &block)
+  def self.helpers(...)
+    Delegator.target.helpers(...)
   end
 
   # Use the middleware for classic applications.
-  def self.use(*args, &block)
-    Delegator.target.use(*args, &block)
+  def self.use(...)
+    Delegator.target.use(...)
   end
 end
